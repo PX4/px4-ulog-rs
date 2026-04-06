@@ -44,13 +44,17 @@ pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
         }
         parser
             .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e)))?;
+            .map_err(|e| std::io::Error::other(format!("err: {:?}", e)))?;
         file_position += num_bytes_read as u64;
     }
 
     // Parse appended data sections if present
     let appended_offsets = *parser.appended_offsets();
-    let non_zero_offsets: Vec<u64> = appended_offsets.iter().copied().filter(|&o| o != 0).collect();
+    let non_zero_offsets: Vec<u64> = appended_offsets
+        .iter()
+        .copied()
+        .filter(|&o| o != 0)
+        .collect();
     for (i, &offset) in non_zero_offsets.iter().enumerate() {
         let read_until = non_zero_offsets.get(i + 1).copied();
         parser.clear_leftover();
@@ -72,9 +76,7 @@ pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
             }
             parser
                 .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-                .map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e))
-                })?;
+                .map_err(|e| std::io::Error::other(format!("err: {:?}", e)))?;
             section_position += num_bytes_read as u64;
         }
     }
@@ -222,9 +224,8 @@ impl TotalArrayReader {
             }
         }
 
-        for i in 0..msg.flattened_format.fields.len() {
-            let el = &msg.flattened_format.fields[i];
-            let value = deserialize_field(&el, msg.data);
+        for (i, el) in msg.flattened_format.fields.iter().enumerate() {
+            let value = deserialize_field(el, msg.data);
             field_values[i].push(&value);
         }
     }
