@@ -1262,7 +1262,7 @@ pub fn read_file_with_simple_callback<CB: FnMut(&Message) -> SimpleCallbackResul
         }
         log_parser
             .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-            .map_err(|e| std::io::Error::other(format!("err: {:?}", e)))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e)))?;
         total_bytes_read += num_bytes_read;
         file_position += num_bytes_read as u64;
     }
@@ -1305,7 +1305,7 @@ pub fn read_file_with_simple_callback<CB: FnMut(&Message) -> SimpleCallbackResul
             }
             log_parser
                 .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-                .map_err(|e| std::io::Error::other(format!("err: {:?}", e)))?;
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e)))?;
             total_bytes_read += num_bytes_read;
             section_position += num_bytes_read as u64;
         }

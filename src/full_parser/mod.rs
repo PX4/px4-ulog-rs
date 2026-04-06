@@ -44,7 +44,7 @@ pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
         }
         parser
             .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-            .map_err(|e| std::io::Error::other(format!("err: {:?}", e)))?;
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e)))?;
         file_position += num_bytes_read as u64;
     }
 
@@ -76,7 +76,7 @@ pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
             }
             parser
                 .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-                .map_err(|e| std::io::Error::other(format!("err: {:?}", e)))?;
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e)))?;
             section_position += num_bytes_read as u64;
         }
     }

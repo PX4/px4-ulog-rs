@@ -1,4 +1,4 @@
-use std::io::{Error, Result};
+use std::io::{Error, ErrorKind, Result};
 use std::iter::*;
 
 /// Convert a array of eight u8 elements into a u64
@@ -84,5 +84,5 @@ pub fn as_f32_le(arr: &[u8]) -> f32 {
 /// assert_eq!(unpack::as_str(&arr).unwrap(), "Hello");
 /// ```
 pub fn as_str(arr: &[u8]) -> Result<&str> {
-    std::str::from_utf8(arr).map_err(|_| Error::other("data is not a string"))
+    std::str::from_utf8(arr).map_err(|_| Error::new(ErrorKind::Other, "data is not a string"))
 }
