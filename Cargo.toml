@@ -5,6 +5,11 @@ authors = ["Ilari Mäkimattila <ilari@auterion.com>"]
 description = "PX4 ULog parsing library"
 license = "MIT"
 edition = "2021"
+exclude = [
+    "tests/fixtures/",
+    "tests/snapshots/",
+    ".github/",
+]
 
 [[bin]]
 name = "px4-ulog"
