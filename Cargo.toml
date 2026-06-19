@@ -1,6 +1,6 @@
 [package]
 name = "px4-ulog"
-version = "0.1.1"
+version = "0.5.0"
 authors = ["Ilari Mäkimattila <ilari@auterion.com>"]
 description = "PX4 ULog parsing library"
 license = "MIT"

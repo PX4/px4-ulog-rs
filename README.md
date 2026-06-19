@@ -8,9 +8,8 @@ so large logs can be processed without loading them entirely into memory.
 
 ## Install
 
-```toml
-[dependencies]
-px4-ulog = "0.1"
+```shell
+cargo add px4-ulog
 ```
 
 ## Usage
