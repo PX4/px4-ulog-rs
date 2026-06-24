@@ -1,6 +1,6 @@
 [package]
 name = "px4-ulog"
-version = "0.6.0"
+version = "0.6.1"
 authors = [
     "Ilari Mäkimattila <ilari@auterion.com>",
     "Beat Küng <beat@px4.io>",
