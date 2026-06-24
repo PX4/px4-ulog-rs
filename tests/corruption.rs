@@ -154,24 +154,63 @@ fn oversized_message_size_does_not_panic() {
 #[test]
 fn read_file_with_simple_callback_handles_truncated_fixture() {
     // truncated_real.ulg is a genuine log cut off mid-message -- exactly the
-    // kind of input crash logs produce. Must not panic, must deliver at least
-    // one Data message, and must not lie about errors.
+    // kind of input crash logs produce. The streaming API must deliver every
+    // valid Data message and report the cut as Truncated rather than failing
+    // (PX4/px4-ulog-rs#7).
+    use px4_ulog::stream_parser::model::Completeness;
     let path = format!(
         "{}/tests/fixtures/truncated_real.ulg",
         env!("CARGO_MANIFEST_DIR")
     );
 
     let mut seen_data = false;
-    let _ = read_file_with_simple_callback(&path, &mut |msg: &Message| {
+    let completeness = read_file_with_simple_callback(&path, &mut |msg: &Message| {
         if matches!(msg, Message::Data(_)) {
             seen_data = true;
         }
         SimpleCallbackResult::KeepReading
-    });
+    })
+    .expect("a cleanly-cut log must recover via the streaming API");
 
     assert!(
         seen_data,
         "truncated_real.ulg should still yield usable Data messages before EOF"
+    );
+    assert_eq!(
+        completeness,
+        Completeness::Truncated,
+        "a mid-record cut must be reported as Truncated"
+    );
+}
+
+#[test]
+fn read_file_with_simple_callback_recovers_malformed_tail() {
+    // The #5/#6 fixture: a complete-looking final record that fails to parse.
+    // The streaming API must deliver the 2,993-message prefix and report
+    // MalformedRecord instead of throwing the flight away (PX4/px4-ulog-rs#7).
+    use px4_ulog::stream_parser::model::Completeness;
+    let path = format!(
+        "{}/tests/fixtures/truncated_data_msg.ulg",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    let mut data_count = 0usize;
+    let completeness = read_file_with_simple_callback(&path, &mut |msg: &Message| {
+        if matches!(msg, Message::Data(_)) {
+            data_count += 1;
+        }
+        SimpleCallbackResult::KeepReading
+    })
+    .expect("a malformed tail must not fail the whole streaming parse");
+
+    assert_eq!(
+        data_count, 2993,
+        "every Data message before the malformed record must reach the callback"
+    );
+    assert!(
+        matches!(completeness, Completeness::MalformedRecord(_)),
+        "a malformed final record must be reported as such, got {:?}",
+        completeness
     );
 }
 
