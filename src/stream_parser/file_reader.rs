@@ -257,6 +257,22 @@ impl<'c> LogParser<'c> {
         )
     }
 
+    /// True once the parser has entered the data section, i.e. at least the
+    /// header and format definitions parsed cleanly. A parse error past this
+    /// point means a malformed record interrupted an otherwise-readable stream
+    /// (truncation, bit-rot in the tail), so the data collected so far is still
+    /// usable.
+    pub fn in_data(&self) -> bool {
+        self.status == ParseStatus::InData
+    }
+
+    /// True when unconsumed bytes are buffered, i.e. the stream ended partway
+    /// through a record. At EOF this is the signature of a truncated file: the
+    /// length-prefixed record header promised more bytes than the file held.
+    pub fn has_leftover(&self) -> bool {
+        !self.leftover.is_empty()
+    }
+
     /// Resets the parser's leftover buffer so it can cleanly parse data from
     /// a new file offset (used when seeking to appended data sections).
     pub fn clear_leftover(&mut self) {
@@ -1191,7 +1207,9 @@ pub fn read_file_with_simple_callback<CB: FnMut(&Message) -> SimpleCallbackResul
         .set_parameter_default_message_callback(&mut wrapped_parameter_default_message_callback);
 
     let mut f = std::fs::File::open(file_path)?;
-    drive_parser(&mut log_parser, &mut f, &|| stop_reading.get())
+    Ok(drive_parser(&mut log_parser, &mut f, &|| {
+        stop_reading.get()
+    })?)
 }
 
 /// Buffer offset reserved at the front of the read buffer (preserved from the
@@ -1208,6 +1226,31 @@ fn to_io_error(e: UlogParseError) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, format!("err: {:?}", e))
 }
 
+/// Why `drive_parser` stopped early. Distinguishing the two lets callers treat
+/// a failed read (the file might be intact, the disk hiccupped) differently
+/// from a malformed record in the byte stream itself.
+pub(crate) enum DriveError {
+    /// An I/O error reading or seeking the file.
+    Io(std::io::Error),
+    /// The parser rejected a record (truncation, corruption, schema mismatch).
+    Parse(UlogParseError),
+}
+
+impl From<std::io::Error> for DriveError {
+    fn from(e: std::io::Error) -> Self {
+        DriveError::Io(e)
+    }
+}
+
+impl From<DriveError> for std::io::Error {
+    fn from(e: DriveError) -> Self {
+        match e {
+            DriveError::Io(io) => io,
+            DriveError::Parse(p) => to_io_error(p),
+        }
+    }
+}
+
 /// Drive an already-configured `LogParser` over a whole file: the primary
 /// section followed by any appended data sections, returning the total number
 /// of bytes consumed. `stop` is polled between reads so callers can abort early.
@@ -1222,7 +1265,7 @@ pub(crate) fn drive_parser(
     parser: &mut LogParser,
     f: &mut std::fs::File,
     stop: &dyn Fn() -> bool,
-) -> Result<usize, std::io::Error> {
+) -> Result<usize, DriveError> {
     let mut buf = vec![0u8; 1024 * 1024];
     let buf_capacity = buf.len() - READ_START;
     let mut total_bytes_read: usize = 0;
@@ -1237,7 +1280,7 @@ pub(crate) fn drive_parser(
         }
         parser
             .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-            .map_err(to_io_error)?;
+            .map_err(DriveError::Parse)?;
         total_bytes_read += num_bytes_read;
         file_position += num_bytes_read as u64;
     }
@@ -1261,7 +1304,7 @@ pub(crate) fn drive_parser(
         }
         parser
             .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-            .map_err(to_io_error)?;
+            .map_err(DriveError::Parse)?;
         total_bytes_read += num_bytes_read;
         file_position += num_bytes_read as u64;
     }
@@ -1302,7 +1345,7 @@ pub(crate) fn drive_parser(
             }
             parser
                 .consume_bytes(&buf[READ_START..(READ_START + num_bytes_read)])
-                .map_err(to_io_error)?;
+                .map_err(DriveError::Parse)?;
             total_bytes_read += num_bytes_read;
             section_position += num_bytes_read as u64;
         }
