@@ -6,8 +6,36 @@ use crate::stream_parser::LittleEndianParser;
 use crate::stream_parser::LogParser;
 use std::collections::HashMap;
 
+/// How the data section ended. PX4 logs are routinely cut off in the field
+/// (power loss, SD card pulled while armed, firmware crash mid-write), so a
+/// broken tail must not discard an otherwise-good flight. This distinguishes
+/// the three ways a stream can stop so callers can react accordingly: a clean
+/// flight, a power-loss truncation, and bit-rot in a record are not the same
+/// event even though all three can leave usable data behind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Completeness {
+    /// The stream ended on a clean record boundary. Nothing was lost.
+    Complete,
+    /// The file ended partway through a record: its length prefix promised more
+    /// bytes than the file held. The classic power-loss / yanked-SD-card cut.
+    Truncated,
+    /// A complete-looking record failed to parse (corruption, schema mismatch,
+    /// bit-rot). The byte stream was intact but a record inside it was not.
+    MalformedRecord(String),
+}
+
+impl Completeness {
+    /// True for anything other than a clean end, i.e. some data may be missing.
+    pub fn is_incomplete(&self) -> bool {
+        !matches!(self, Completeness::Complete)
+    }
+}
+
 pub struct ParsedData {
     pub messages: HashMap<String, HashMap<MultiId, HashMap<String, SomeVec>>>,
+    /// How the data section terminated. The `messages` above are always the
+    /// valid prefix parsed before that point.
+    pub completeness: Completeness,
 }
 
 pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
@@ -20,8 +48,36 @@ pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
     let mut parser = LogParser::default();
     parser.set_data_message_callback(&mut callback);
 
-    // Drive the whole file (primary section + any appended data sections).
-    crate::stream_parser::file_reader::drive_parser(&mut parser, &mut f, &|| false)?;
+    // Drive the whole file (primary section + any appended data sections) and
+    // classify how it ended:
+    //   - I/O error: always propagate. The file may be intact; the read failed,
+    //     so we cannot claim anything about completeness.
+    //   - Parse error before the data section: bad header/definitions leaves
+    //     nothing usable, so propagate.
+    //   - Parse error inside the data section: a complete-looking record was
+    //     malformed. Keep the valid prefix, report MalformedRecord.
+    //   - Clean stop with bytes still buffered: the file was cut mid-record.
+    //     Keep the prefix, report Truncated.
+    //   - Clean stop, nothing buffered: Complete.
+    use crate::stream_parser::file_reader::DriveError;
+    let completeness =
+        match crate::stream_parser::file_reader::drive_parser(&mut parser, &mut f, &|| false) {
+            Ok(_) => {
+                if parser.has_leftover() {
+                    Completeness::Truncated
+                } else {
+                    Completeness::Complete
+                }
+            }
+            Err(DriveError::Io(e)) => return Err(e),
+            Err(DriveError::Parse(p)) => {
+                if parser.in_data() {
+                    Completeness::MalformedRecord(format!("{:?}", p))
+                } else {
+                    return Err(DriveError::Parse(p).into());
+                }
+            }
+        };
 
     let mut data_format = parser.get_final_data_format();
 
@@ -55,7 +111,10 @@ pub fn read_file(file_path: &str) -> Result<ParsedData, std::io::Error> {
         }
     }
 
-    Ok(ParsedData { messages })
+    Ok(ParsedData {
+        messages,
+        completeness,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -183,7 +242,36 @@ mod tests {
             "{}/tests/fixtures/6ba1abc7-b433-4029-b8f5-3b2bb12d3b6c.ulg",
             env!("CARGO_MANIFEST_DIR")
         );
-        read_file(&filename).unwrap();
+        let parsed = read_file(&filename).unwrap();
+        assert_eq!(parsed.completeness, Completeness::Complete);
+    }
+
+    /// A real flight log cut off mid-record (the final perf-counter logged
+    /// string ends with `...88us  nanus rms` and no terminator). The parser
+    /// used to `?`-propagate the error and drop all 2,993 cleanly-parsed
+    /// messages. It must now return the valid prefix. This file ends on a
+    /// complete-looking but malformed record, so it classifies as
+    /// MalformedRecord rather than Truncated.
+    #[test]
+    fn truncated_data_message_returns_valid_prefix() {
+        let filename = format!(
+            "{}/tests/fixtures/truncated_data_msg.ulg",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let parsed = read_file(&filename).expect("truncated log must yield its valid prefix");
+        assert!(
+            matches!(parsed.completeness, Completeness::MalformedRecord(_)),
+            "a malformed final record must be classified as MalformedRecord, got {:?}",
+            parsed.completeness
+        );
+        assert!(
+            parsed.completeness.is_incomplete(),
+            "a malformed tail means the log is incomplete"
+        );
+        assert!(
+            !parsed.messages.is_empty(),
+            "the messages parsed before the truncation must be recovered"
+        );
     }
 
     #[test]

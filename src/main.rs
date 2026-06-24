@@ -1,4 +1,4 @@
-use px4_ulog::full_parser::{read_file, SomeVec};
+use px4_ulog::full_parser::{read_file, Completeness, SomeVec};
 use std::collections::HashSet;
 
 fn main() {
@@ -6,6 +6,18 @@ fn main() {
     let cmd = args.next();
     if let Some(filename) = args.next() {
         let parsed = read_file(&filename).expect("Failed to parse ULog file");
+
+        match &parsed.completeness {
+            Completeness::Complete => {}
+            Completeness::Truncated => eprintln!(
+                "warning: '{}' is truncated; showing the data recovered before the cut-off",
+                filename
+            ),
+            Completeness::MalformedRecord(why) => eprintln!(
+                "warning: '{}' has a malformed record ({}); showing the data recovered before it",
+                filename, why
+            ),
+        }
 
         if let Some(dataset_name) = args.next() {
             let filters = args.collect::<HashSet<String>>();

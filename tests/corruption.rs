@@ -273,6 +273,60 @@ fn real_world_format_not_utf8_is_rejected() {
     );
 }
 
+/// Real flight log truncated mid-record: the final perf-counter logged-string
+/// message is cut off at EOF, leaving a Data record header that claims a body
+/// shorter than the 2-byte msg_id it must contain. The streaming parser
+/// surfaces "too short" after delivering every clean record (PX4/px4-ulog-rs#5).
+#[test]
+fn real_world_truncated_data_msg_reports_too_short_after_prefix() {
+    let count = parse_file_with_streaming(&corrupt_fixture("truncated_data_msg.ulg"))
+        .expect_err("truncated fixture must not parse cleanly at the stream level");
+    let msg = format!("{:?}", count);
+    assert!(
+        msg.contains("too short"),
+        "expected a too-short data message error, got: {}",
+        msg
+    );
+}
+
+/// The full_parser, unlike the raw stream, must recover the valid prefix of a
+/// truncated log rather than discard it (PX4/px4-ulog-rs#5).
+#[test]
+fn real_world_truncated_data_msg_full_parser_recovers_prefix() {
+    use px4_ulog::full_parser::Completeness;
+    let parsed = px4_ulog::full_parser::read_file(&corrupt_fixture("truncated_data_msg.ulg"))
+        .expect("full_parser must return the valid prefix of a truncated log");
+    assert!(
+        matches!(parsed.completeness, Completeness::MalformedRecord(_)),
+        "a malformed final record must be classified as such, got {:?}",
+        parsed.completeness
+    );
+    assert!(
+        !parsed.messages.is_empty(),
+        "messages before the truncation must survive"
+    );
+}
+
+/// A log cut off cleanly mid-record (length prefix promises more bytes than the
+/// file holds, no parse error) must classify as Truncated, not MalformedRecord.
+/// This is the power-loss / yanked-SD-card case, distinct from bit-rot in a
+/// complete-looking record.
+#[test]
+fn real_world_clean_cut_classifies_as_truncated() {
+    use px4_ulog::full_parser::Completeness;
+    let parsed = px4_ulog::full_parser::read_file(&corrupt_fixture("truncated_real.ulg"))
+        .expect("a cleanly-cut log must still yield its prefix");
+    assert_eq!(
+        parsed.completeness,
+        Completeness::Truncated,
+        "a mid-record cut with no malformed bytes is a truncation"
+    );
+    assert!(
+        !parsed.messages.is_empty(),
+        "messages before the cut must survive"
+    );
+}
+
 /// All three real-world corrupt fixtures must deliver some Data messages
 /// before the corruption hits, not give up at the first byte. Useful logs
 /// are still partially readable.
@@ -282,6 +336,7 @@ fn real_world_fixtures_deliver_data_before_corruption() {
         "corrupt_actuator_armed_wrong_size.ulg",
         "corrupt_unregistered_msg_id.ulg",
         "corrupt_format_not_utf8.ulg",
+        "truncated_data_msg.ulg",
     ] {
         let path = corrupt_fixture(name);
         let mut seen_data = false;
