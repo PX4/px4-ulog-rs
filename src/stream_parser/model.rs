@@ -166,6 +166,32 @@ pub enum ParseErrorType {
     Other,
 }
 
+/// How a ULog data section ended. PX4 logs are routinely cut off in the field
+/// (power loss, SD card pulled while armed, firmware crash mid-write), so a
+/// broken tail must not discard an otherwise-good flight. This distinguishes
+/// the three ways a stream can stop so callers can react accordingly: a clean
+/// flight, a power-loss truncation, and bit-rot in a record are not the same
+/// event even though all three can leave usable data behind. Both
+/// `full_parser::read_file` and `read_file_with_simple_callback` report it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Completeness {
+    /// The stream ended on a clean record boundary. Nothing was lost.
+    Complete,
+    /// The file ended partway through a record: its length prefix promised more
+    /// bytes than the file held. The classic power-loss / yanked-SD-card cut.
+    Truncated,
+    /// A complete-looking record failed to parse (corruption, schema mismatch,
+    /// bit-rot). The byte stream was intact but a record inside it was not.
+    MalformedRecord(String),
+}
+
+impl Completeness {
+    /// True for anything other than a clean end, i.e. some data may be missing.
+    pub fn is_incomplete(&self) -> bool {
+        !matches!(self, Completeness::Complete)
+    }
+}
+
 impl fmt::Display for ParseErrorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

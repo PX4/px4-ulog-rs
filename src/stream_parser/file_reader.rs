@@ -1,4 +1,4 @@
-use crate::stream_parser::model::{ParseErrorType, UlogParseError};
+use crate::stream_parser::model::{Completeness, ParseErrorType, UlogParseError};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -1112,10 +1112,16 @@ pub enum Message<'a> {
     ParameterDefaultMessage(&'a model::ParameterDefaultMessage<'a>),
 }
 
+/// Stream a ULog file message-by-message into `c`, recovering the valid prefix
+/// of a truncated or malformed log rather than discarding it. Every clean
+/// message is delivered to the callback as it is parsed; the returned
+/// [`Completeness`] reports how the stream ended (see [`drive_parser`]).
+/// Only a broken header/definitions section or a genuine I/O error returns
+/// `Err`, since neither leaves usable data behind.
 pub fn read_file_with_simple_callback<CB: FnMut(&Message) -> SimpleCallbackResult>(
     file_path: &str,
     c: &mut CB,
-) -> Result<usize, std::io::Error> {
+) -> Result<Completeness, std::io::Error> {
     let stop_reading = Cell::new(false);
     let c_cell: RefCell<&mut CB> = RefCell::new(c);
     let mut wrapped_data_message_callback = |data_message: &DataMessage| {
@@ -1207,9 +1213,7 @@ pub fn read_file_with_simple_callback<CB: FnMut(&Message) -> SimpleCallbackResul
         .set_parameter_default_message_callback(&mut wrapped_parameter_default_message_callback);
 
     let mut f = std::fs::File::open(file_path)?;
-    Ok(drive_parser(&mut log_parser, &mut f, &|| {
-        stop_reading.get()
-    })?)
+    drive_parser(&mut log_parser, &mut f, &|| stop_reading.get())
 }
 
 /// Buffer offset reserved at the front of the read buffer (preserved from the
@@ -1255,13 +1259,18 @@ impl From<DriveError> for std::io::Error {
 /// section followed by any appended data sections, returning the total number
 /// of bytes consumed. `stop` is polled between reads so callers can abort early.
 ///
+/// This is the low-level engine with no recovery policy: it surfaces a typed
+/// [`DriveError`] (I/O vs parse) the instant anything goes wrong. Callers
+/// should go through [`drive_parser`], which applies the truncation/corruption
+/// recovery and reports [`Completeness`].
+///
 /// The FlagBits message carries the appended-data offsets but is itself part of
 /// the stream, so the offsets are only known after it has been parsed. We first
 /// prime the parser in small increments until that happens, then let the main
 /// loop clamp each read to the first appended offset. Reading a large chunk
 /// before the offsets are known would over-read into the appended region and
 /// mis-parse it as primary data.
-pub(crate) fn drive_parser(
+pub(crate) fn raw_parser(
     parser: &mut LogParser,
     f: &mut std::fs::File,
     stop: &dyn Fn() -> bool,
@@ -1352,4 +1361,45 @@ pub(crate) fn drive_parser(
     }
 
     Ok(total_bytes_read)
+}
+
+/// Drive the parser over a whole file and classify how the stream ended,
+/// recovering the valid prefix instead of failing the whole parse on a broken
+/// tail. This is the entry point both `read_file` and
+/// `read_file_with_simple_callback` use; it wraps the [`raw_parser`] engine
+/// with the recovery policy. The valid messages have already been delivered to
+/// whatever callbacks the parser holds by the time this returns; the result
+/// only describes completeness.
+///
+///   - I/O error: always propagate. The file may be intact, the read failed,
+///     so we cannot claim anything about completeness.
+///   - Parse error before the data section: bad header/definitions leaves
+///     nothing usable, so propagate.
+///   - Parse error inside the data section: a complete-looking record was
+///     malformed. The prefix is already delivered; report MalformedRecord.
+///   - Clean stop with bytes still buffered: the file was cut mid-record.
+///     Report Truncated.
+///   - Clean stop, nothing buffered: Complete.
+pub(crate) fn drive_parser(
+    parser: &mut LogParser,
+    f: &mut std::fs::File,
+    stop: &dyn Fn() -> bool,
+) -> Result<Completeness, std::io::Error> {
+    match raw_parser(parser, f, stop) {
+        Ok(_) => {
+            if parser.has_leftover() {
+                Ok(Completeness::Truncated)
+            } else {
+                Ok(Completeness::Complete)
+            }
+        }
+        Err(DriveError::Io(e)) => Err(e),
+        Err(DriveError::Parse(p)) => {
+            if parser.in_data() {
+                Ok(Completeness::MalformedRecord(format!("{:?}", p)))
+            } else {
+                Err(DriveError::Parse(p).into())
+            }
+        }
+    }
 }
