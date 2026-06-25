@@ -32,13 +32,22 @@ use std::io::{Read, Write};
 /// Topics and field names that carry lat/lon we want to scrub.
 /// Field types are determined at runtime from the FlattenedFormat.
 const POSITION_FIELDS: &[(&str, &[&str])] = &[
-    ("vehicle_gps_position", &["lat", "lon"]),
-    ("vehicle_global_position", &["lat", "lon"]),
+    (
+        "vehicle_gps_position",
+        &["lat", "lon", "latitude_deg", "longitude_deg"],
+    ),
+    (
+        "vehicle_global_position",
+        &["lat", "lon", "latitude_deg", "longitude_deg"],
+    ),
     (
         "sensor_gps",
         &["lat", "lon", "latitude_deg", "longitude_deg"],
     ),
-    ("home_position", &["lat", "lon"]),
+    (
+        "home_position",
+        &["lat", "lon", "latitude_deg", "longitude_deg"],
+    ),
     ("vehicle_local_position", &["ref_lat", "ref_lon"]),
     (
         "position_setpoint_triplet",
@@ -51,8 +60,14 @@ const POSITION_FIELDS: &[(&str, &[&str])] = &[
             "next.lon",
         ],
     ),
-    ("estimator_global_position", &["lat", "lon"]),
-    ("estimator_gps_status", &["lat", "lon"]),
+    (
+        "estimator_global_position",
+        &["lat", "lon", "latitude_deg", "longitude_deg"],
+    ),
+    (
+        "estimator_gps_status",
+        &["lat", "lon", "latitude_deg", "longitude_deg"],
+    ),
 ];
 
 #[derive(Clone, Debug)]
