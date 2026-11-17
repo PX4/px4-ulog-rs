@@ -174,6 +174,8 @@ pub enum ParseErrorType {
 /// event even though all three can leave usable data behind. Both
 /// `full_parser::read_file` and `read_file_with_simple_callback` report it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Completeness {
     /// The stream ended on a clean record boundary. Nothing was lost.
     Complete,
@@ -425,6 +427,24 @@ impl<'a> LoggedStringMessage<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "serde")]
+    #[test]
+    fn completeness_serde_round_trip() {
+        use super::Completeness;
+        let cases = [
+            (Completeness::Complete, r#""complete""#),
+            (Completeness::Truncated, r#""truncated""#),
+            (
+                Completeness::MalformedRecord("bad msg_id".to_string()),
+                r#"{"malformed_record":"bad msg_id"}"#,
+            ),
+        ];
+        for (value, json) in cases {
+            assert_eq!(serde_json::to_string(&value).unwrap(), json);
+            assert_eq!(serde_json::from_str::<Completeness>(json).unwrap(), value);
+        }
+    }
+
     use super::*;
 
     #[test]
