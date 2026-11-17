@@ -371,13 +371,13 @@ impl<'c> LogParser<'c> {
                         ),
                     ));
                 }
-                for flag_idx in 1..flag_bits.incompat_flags.len() {
-                    if flag_bits.incompat_flags[flag_idx] != 0 {
+                for (flag_idx, &flag) in flag_bits.incompat_flags.iter().enumerate().skip(1) {
+                    if flag != 0 {
                         return Err(UlogParseError::new(
                             ParseErrorType::Other,
                             &format!(
                                 "Cannot parse log, incompatible flag bits set (idx={}, value={})",
-                                flag_idx, flag_bits.incompat_flags[flag_idx]
+                                flag_idx, flag
                             ),
                         ));
                     }
